@@ -51,9 +51,11 @@ public:
     }
 
     AVDeviceInfoList *dev_list = nullptr;
-    int ret = avdevice_list_input_sources(v4l2_fmt, nullptr, nullptr, &dev_list);
+    int ret =
+        avdevice_list_input_sources(v4l2_fmt, nullptr, nullptr, &dev_list);
     if (ret < 0) {
-      av_log(nullptr, AV_LOG_ERROR, "Unable to avdevice_list_input_sources: %s\n",
+      av_log(nullptr, AV_LOG_ERROR,
+             "Unable to avdevice_list_input_sources: %s\n",
              av_err2str_cpp(ret));
       return false;
     }
@@ -289,6 +291,7 @@ public:
 
 // m=video 1936 RTP/AVP 96
 // a=rtpmap:96 H264/90000
+#ifndef V4L2_ENCODE
 class H264EncodeContext : public EncodeContext {
 public:
   static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUV422P;
@@ -307,6 +310,74 @@ public:
     av_opt_set_double(video_enc_ctx->priv_data, "crf", crf, 0);
   }
 };
+
+#else
+
+struct V4L2m2mContext {
+  char devname[PATH_MAX];
+  int fd;
+};
+
+struct V4L2m2mPriv {
+  AVClass *clazz;
+  V4L2m2mContext *context;
+};
+
+class H264EncodeContext : public EncodeContext {
+public:
+  static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUV420P;
+  H264EncodeContext()
+      : EncodeContext("h264_v4l2m2m", VIDEO_NET_PATH, pix_fmt) {}
+
+  void set_options(AVDictionary *&opts) override {
+    int bitrate = crf_to_bitrate(DEFAULT_CRF);
+    av_dict_set_int(&opts, "b", bitrate, 0);
+    av_dict_set(&opts, "framerate", AV_STRINGIFY(FRAMERATE), 0);
+  }
+
+  static void v4l2_set_ext_ctrl(V4L2m2mContext *s, unsigned int id,
+                                signed int value, const char *name,
+                                int log_warning) {
+    struct v4l2_ext_controls ctrls = {{0}};
+    struct v4l2_ext_control ctrl = {0};
+
+    /* set ctrls */
+    ctrls.ctrl_class = V4L2_CTRL_CLASS_MPEG;
+    ctrls.controls = &ctrl;
+    ctrls.count = 1;
+
+    /* set ctrl*/
+    ctrl.value = value;
+    ctrl.id = id;
+
+    if (ioctl(s->fd, VIDIOC_S_EXT_CTRLS, &ctrls) < 0)
+      av_log(nullptr,
+             log_warning || errno != EINVAL ? AV_LOG_WARNING : AV_LOG_DEBUG,
+             "Failed to set %s: %s\n", name, strerror(errno));
+    else
+      av_log(nullptr, AV_LOG_DEBUG, "Encoder: %s = %d\n", name, value);
+  }
+
+  /**
+   * BCM2835 driver does not expose a crf control, so we approximate the bitrate
+   * instead
+   */
+  static int crf_to_bitrate(double crf) {
+    double norm = crf / 50.0;
+    return int(norm * (25.0 * 1024.0) + (1.0 - norm) * (512.0 * 1024.0));
+  }
+
+  void set_crf(double crf) {
+    int bitrate = crf_to_bitrate(crf);
+    if (V4L2m2mPriv *priv = (V4L2m2mPriv *)video_enc_ctx->priv_data) {
+      if (V4L2m2mContext *s = priv->context) {
+        v4l2_set_ext_ctrl(s, V4L2_CID_MPEG_VIDEO_BITRATE, bitrate, "bit rate",
+                          1);
+      }
+    }
+  }
+};
+#endif
 
 // m=video 1938 RTP/AVP 26
 class JPEGEncodeContext : public EncodeContext {
