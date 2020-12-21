@@ -1,0 +1,149 @@
+diff -Naur pthreads-w32-2-9-1-release/GNUmakefile pthreads-w32-2-9-1-release-fixes/GNUmakefile
+--- pthreads-w32-2-9-1-release/GNUmakefile	2012-05-26 18:15:07.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/GNUmakefile	2020-12-17 19:46:08.970294942 -1000
+@@ -49,7 +49,7 @@
+ 
+ # For cross compiling use e.g.
+ # make CROSS=x86_64-w64-mingw32- clean GC-inlined
+-CROSS	= 
++CROSS	= i386-mingw32ce-
+ 
+ AR	= $(CROSS)ar
+ DLLTOOL = $(CROSS)dlltool
+@@ -93,7 +93,7 @@
+ #
+ # ----------------------------------------------------------------------
+ 
+-GC_CFLAGS	= $(PTW32_FLAGS) 
++GC_CFLAGS	= $(PTW32_FLAGS) -mwin32 -march=pentium3 -DWINCE -D_WIN32_IE=0x0600 -D_WIN32_WCE=0x0600 -D__CE_VERSION__=0x0600
+ GCE_CFLAGS	= $(PTW32_FLAGS) -mthreads
+ 
+ ## Mingw
+diff -Naur pthreads-w32-2-9-1-release/config.h pthreads-w32-2-9-1-release-fixes/config.h
+--- pthreads-w32-2-9-1-release/config.h	2011-05-29 14:31:00.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/config.h	2020-12-17 19:30:20.970956820 -1000
+@@ -23,10 +23,10 @@
+ #undef NEED_DUPLICATEHANDLE
+ 
+ /* Define if you don't have Win32 _beginthreadex. (eg. WinCE) */
+-#undef NEED_CREATETHREAD
++#define NEED_CREATETHREAD
+ 
+ /* Define if you don't have Win32 errno. (eg. WinCE) */
+-#undef NEED_ERRNO
++#define NEED_ERRNO
+ 
+ /* Define if you don't have Win32 calloc. (eg. WinCE)  */
+ #undef NEED_CALLOC
+diff -Naur pthreads-w32-2-9-1-release/create.c pthreads-w32-2-9-1-release-fixes/create.c
+--- pthreads-w32-2-9-1-release/create.c	2012-03-17 19:11:43.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/create.c	2020-12-17 19:48:22.868217586 -1000
+@@ -200,7 +200,7 @@
+    * finished with it here.
+    */
+ 
+-#if ! (defined (__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__) 
++#if ! (defined (__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__) || defined(WINCE)
+ 
+   tp->threadH =
+     threadH =
+diff -Naur pthreads-w32-2-9-1-release/errno.c pthreads-w32-2-9-1-release-fixes/errno.c
+--- pthreads-w32-2-9-1-release/errno.c	2007-11-22 04:14:58.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/errno.c	2020-12-17 19:19:36.957178887 -1000
+@@ -67,7 +67,6 @@
+  * #endif
+  *
+  */
+-
+ int *
+ _errno (void)
+ {
+@@ -84,7 +83,7 @@
+     }
+   else
+     {
+-      result = (int *)(&self.p->exitStatus);
++      result = (int *)(&((ptw32_thread_t*)self.p)->exitStatus);
+     }
+ 
+   return (result);
+diff -Naur pthreads-w32-2-9-1-release/need_errno.h pthreads-w32-2-9-1-release-fixes/need_errno.h
+--- pthreads-w32-2-9-1-release/need_errno.h	2011-05-29 14:31:00.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/need_errno.h	2020-12-17 19:20:11.471171760 -1000
+@@ -24,7 +24,7 @@
+ #error ERROR: Only Win32 targets supported!
+ #endif
+ 
+-#include <winsock.h>
++#include <winsock2.h>
+ 
+ #if defined(__cplusplus)
+ extern "C" {
+@@ -71,7 +71,7 @@
+ 
+ /* declare reference to errno */
+ 
+-#if (defined(_MT) || defined(_MD) || defined(_DLL)) && !defined(_MAC)
++#if (defined(_MT) || defined(_MD) || defined(_DLL) || defined(WINCE)) && !defined(_MAC)
+ PTW32_DLLPORT int * __cdecl _errno(void);
+ #define errno   (*_errno())
+ #else   /* ndef _MT && ndef _MD && ndef _DLL */
+diff -Naur pthreads-w32-2-9-1-release/pthread_exit.c pthreads-w32-2-9-1-release-fixes/pthread_exit.c
+--- pthreads-w32-2-9-1-release/pthread_exit.c	2011-05-29 14:31:01.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/pthread_exit.c	2020-12-17 19:52:08.472192752 -1000
+@@ -88,7 +88,7 @@
+        * Implicit POSIX handles are cleaned up in ptw32_throw() now.
+        */
+ 
+-#if ! (defined (__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__)  || defined (__DMC__)
++#if ! (defined (__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__)  || defined (__DMC__) || defined(WINCE)
+       _endthreadex ((unsigned) (size_t) value_ptr);
+ #else
+       _endthread ();
+diff -Naur pthreads-w32-2-9-1-release/pthread_win32_attach_detach_np.c pthreads-w32-2-9-1-release-fixes/pthread_win32_attach_detach_np.c
+--- pthreads-w32-2-9-1-release/pthread_win32_attach_detach_np.c	2011-07-04 16:02:35.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/pthread_win32_attach_detach_np.c	2020-12-17 19:45:40.886276513 -1000
+@@ -70,7 +70,9 @@
+    *
+    * This should take care of any security issues.
+    */
+-#if defined(__GNUC__) || _MSC_VER < 1400
++#if defined(WINCE)
++  wcsncpy(QuserExDLLPathBuf, L"\\Windows", 1024);
++#elif defined(__GNUC__) || _MSC_VER < 1400
+   if(GetSystemDirectory(QuserExDLLPathBuf, sizeof(QuserExDLLPathBuf)))
+   {
+     (void) strncat(QuserExDLLPathBuf,
+diff -Naur pthreads-w32-2-9-1-release/ptw32_threadStart.c pthreads-w32-2-9-1-release-fixes/ptw32_threadStart.c
+--- pthreads-w32-2-9-1-release/ptw32_threadStart.c	2012-03-17 19:11:44.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/ptw32_threadStart.c	2020-12-17 19:51:01.636759104 -1000
+@@ -340,7 +340,7 @@
+   (void) pthread_win32_thread_detach_np ();
+ #endif
+ 
+-#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__)
++#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__) || defined(WINCE)
+   _endthreadex ((unsigned)(size_t) status);
+ #else
+   _endthread ();
+diff -Naur pthreads-w32-2-9-1-release/ptw32_throw.c pthreads-w32-2-9-1-release-fixes/ptw32_throw.c
+--- pthreads-w32-2-9-1-release/ptw32_throw.c	2011-07-01 05:29:23.000000000 -1000
++++ pthreads-w32-2-9-1-release-fixes/ptw32_throw.c	2020-12-17 19:53:18.077665717 -1000
+@@ -90,7 +90,7 @@
+        * explicit thread exit here after cleaning up POSIX
+        * residue (i.e. cleanup handlers, POSIX thread handle etc).
+        */
+-#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__)
++#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__) || defined(WINCE)
+       unsigned exitCode = 0;
+ 
+       switch (exception)
+@@ -113,7 +113,7 @@
+ 
+ #endif
+ 
+-#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__)
++#if ! (defined(__MINGW64__) || defined(__MINGW32__)) || defined (__MSVCRT__) || defined (__DMC__) || defined(WINCE)
+       _endthreadex (exitCode);
+ #else
+       _endthread ();

@@ -1,0 +1,35 @@
+#include "winver.h"
+#define IDI_ICON1 101
+#define IDI_ICON2 102
+
+IDI_ICON1  ICON DISCARDABLE "network_television.ico"
+IDI_ICON2  ICON DISCARDABLE "camera.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGS 0x0L
+ FILEFLAGSMASK 0x3fL
+ FILEOS 0x00040004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "000004b0"
+        BEGIN
+            VALUE "CompanyName", "Jack Andersen"
+            VALUE "FileDescription", "Tiberius Video"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "LegalCopyright", "Copyright (C) 2020 Jack Andersen"
+            VALUE "InternalName", "vid-receiver"
+            VALUE "OriginalFilename", "vid-receiver.exe"
+            VALUE "ProductName", "Tiberius Video"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0, 1200
+    END
+END

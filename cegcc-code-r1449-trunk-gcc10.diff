@@ -1,0 +1,402 @@
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-arc.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-arc.texi
+--- cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-arc.texi	2009-10-17 00:22:09.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-arc.texi	2020-12-10 20:41:28.901162506 -1000
+@@ -212,67 +212,6 @@
+ encodings for use of these instructions according to the specification
+ by the user.  The parameters are:
+ 
+-@table @bullet
+-@item @var{name}
+-Name of the extension instruction 
+-
+-@item @var{opcode}
+-Opcode to be used. (Bits 27:31 in the encoding).  Valid values
+-0x10-0x1f or 0x03
+-
+-@item @var{subopcode}
+-Subopcode to be used.  Valid values are from 0x09-0x3f.  However the
+-correct value also depends on @var{syntaxclass}
+-
+-@item @var{suffixclass}
+-Determines the kinds of suffixes to be allowed.  Valid values are
+-@code{SUFFIX_NONE}, @code{SUFFIX_COND}, 
+-@code{SUFFIX_FLAG} which indicates the absence or presence of
+-conditional suffixes and flag setting by the extension instruction.
+-It is also possible to specify that an instruction sets the flags and
+-is conditional by using @code{SUFFIX_CODE} | @code{SUFFIX_FLAG}.
+-
+-@item @var{syntaxclass}
+-Determines the syntax class for the instruction.  It can have the
+-following values:
+-
+-@table @code
+-@item @code{SYNTAX_2OP}:
+-2 Operand Instruction 
+-@item @code{SYNTAX_3OP}:
+-3 Operand Instruction 
+-@end table
+-
+-In addition there could be modifiers for the syntax class as described
+-below:
+-
+-@itemize @minus
+-Syntax Class Modifiers are:
+-
+-@item @code{OP1_MUST_BE_IMM}:
+-Modifies syntax class SYNTAX_3OP,  specifying that the first operand
+-of a three-operand instruction must be an immediate (i.e., the result
+-is discarded).  OP1_MUST_BE_IMM is used by bitwise ORing it with
+-SYNTAX_3OP as given in the example below.  This could usually be used
+-to set the flags using specific instructions and not retain results. 
+-
+-@item @code{OP1_IMM_IMPLIED}:
+-Modifies syntax class SYNTAX_20P, it specifies that there is an
+-implied immediate destination operand which does not appear in the
+-syntax.  For example, if the source code contains an instruction like:
+-
+-@smallexample
+-inst r1,r2 
+-@end smallexample
+-
+-it really means that the first argument is an implied immediate (that
+-is, the result is discarded).  This is the same as though the source
+-code were: inst 0,r1,r2.  You use OP1_IMM_IMPLIED by bitwise ORing it
+-with SYNTAX_20P.
+-
+-@end itemize 
+-@end table
+-
+ For example, defining 64-bit multiplier with immediate operands:
+ 
+ @smallexample
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-arm.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-arm.texi
+--- cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-arm.texi	2009-10-17 00:22:09.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-arm.texi	2020-12-10 20:42:36.009626958 -1000
+@@ -340,33 +340,6 @@
+ @code{unified} syntax, which can be selected via the @code{.syntax}
+ directive, and has the following main features:
+ 
+-@table @bullet
+-@item
+-Immediate operands do not require a @code{#} prefix.
+-
+-@item
+-The @code{IT} instruction may appear, and if it does it is validated
+-against subsequent conditional affixes.  In ARM mode it does not
+-generate machine code, in THUMB mode it does.
+-
+-@item
+-For ARM instructions the conditional affixes always appear at the end
+-of the instruction.  For THUMB instructions conditional affixes can be
+-used, but only inside the scope of an @code{IT} instruction.
+-
+-@item
+-All of the instructions new to the V6T2 architecture (and later) are
+-available.  (Only a few such instructions can be written in the
+-@code{divided} syntax).
+-
+-@item
+-The @code{.N} and @code{.W} suffixes are recognized and honored.
+-
+-@item
+-All instructions set the flags if and only if they have an @code{s}
+-affix.
+-@end table
+-
+ @node ARM-Chars
+ @subsection Special Characters
+ 
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-mips.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-mips.texi
+--- cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-mips.texi	2009-10-17 00:22:09.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-mips.texi	2020-12-10 20:43:10.333870158 -1000
+@@ -201,10 +201,6 @@
+ instructions around accesses to the @samp{HI} and @samp{LO} registers.
+ @samp{-no-m4650} turns off this option.
+ 
+-@itemx -m3900
+-@itemx -no-m3900
+-@itemx -m4100
+-@itemx -no-m4100
+ For each option @samp{-m@var{nnnn}}, generate code for the MIPS
+ @sc{r@var{nnnn}} chip.  This tells the assembler to accept instructions
+ specific to that chip, and to schedule for that chip's hazards.
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-score.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-score.texi
+--- cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-score.texi	2009-10-17 21:06:48.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-score.texi	2020-12-10 20:45:39.481092504 -1000
+@@ -36,7 +36,6 @@
+ @item -EB
+ Assemble code for a big-endian cpu
+ 
+-@itemx -EL
+ Assemble code for a little-endian cpu
+ 
+ @item -FIXDD 
+@@ -48,13 +47,10 @@
+ @item -SCORE5
+ Assemble code for target is SCORE5
+ 
+-@itemx -SCORE5U
+ Assemble code for target is SCORE5U
+ 
+-@itemx -SCORE7
+ Assemble code for target is SCORE7, this is default setting
+ 
+-@itemx -SCORE3
+ Assemble code for target is SCORE3
+ 
+ @item -march=score7
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-tic54x.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-tic54x.texi
+--- cegcc-code-r1449-trunk/cegcc/src/binutils/gas/doc/c-tic54x.texi	2009-10-17 00:22:09.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/binutils/gas/doc/c-tic54x.texi	2020-12-10 20:44:22.985776783 -1000
+@@ -108,13 +108,6 @@
+ is replaced with x.  At this point, x has already been encountered
+ and the substitution stops.
+ 
+-@smallexample @code
+- .asg   "x",SYM1 
+- .asg   "SYM1",SYM2
+- .asg   "SYM2",x
+- add    x,a             ; final code assembled is "add  x, a"
+-@end smallexample
+-
+ Macro parameters are converted to subsyms; a side effect of this is the normal
+ @code{@value{AS}} '\ARG' dereferencing syntax is unnecessary.  Subsyms
+ defined within a macro will have global scope, unless the @code{.var}
+@@ -125,17 +118,8 @@
+ ambiguous by placing colons on either side of the subsym.  The following
+ code: 
+ 
+-@smallexample @code
+- .eval  "10",x
+-LAB:X:  add     #x, a
+-@end smallexample
+-
+ When assembled becomes:
+ 
+-@smallexample @code
+-LAB10  add     #10, a
+-@end smallexample
+-
+ Smaller parts of the string assigned to a subsym may be accessed with
+ the following syntax:
+ 
+@@ -308,11 +292,6 @@
+ of a label or address.  For example, if an address @code{_label} resides
+ in extended program memory, the value of @code{_label} may be loaded as
+ follows:
+-@smallexample @code
+- ldx     #_label,16,a    ; loads extended bits of _label
+- or      #_label,a       ; loads lower 16 bits of _label
+- bacc    a               ; full address is in accumulator A
+-@end smallexample
+ 
+ @node TIC54X-Directives
+ @section Directives
+@@ -344,7 +323,6 @@
+ performed on @var{string} before assignment.
+ 
+ @cindex @code{eval} directive, TIC54X
+-@itemx .eval @var{string}, @var{name}
+ Evaluate the contents of string @var{string} and assign the result as a
+ string to the subsym @var{name}.  String replacement is performed on
+ @var{string} before assignment. 
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/c-tree.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/c-tree.texi
+--- cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/c-tree.texi	2009-05-19 03:16:21.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/c-tree.texi	2020-12-10 20:56:46.134364400 -1000
+@@ -2338,15 +2338,11 @@
+ not matter.  The type of the operands and that of the result are
+ always of @code{BOOLEAN_TYPE} or @code{INTEGER_TYPE}.
+ 
+-@itemx POINTER_PLUS_EXPR
+ This node represents pointer arithmetic.  The first operand is always
+ a pointer/reference type.  The second operand is always an unsigned
+ integer type compatible with sizetype.  This is the only binary
+ arithmetic operand that can operate on pointer types.
+ 
+-@itemx PLUS_EXPR
+-@itemx MINUS_EXPR
+-@itemx MULT_EXPR
+ These nodes represent various binary arithmetic operations.
+ Respectively, these operations are addition, subtraction (of the second
+ operand from the first) and multiplication.  Their operands may have
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/cppopts.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/cppopts.texi
+--- cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/cppopts.texi	2009-05-19 03:16:21.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/cppopts.texi	2020-12-10 20:56:08.103437509 -1000
+@@ -758,8 +758,6 @@
+ Enable special code to work around file systems which only permit very
+ short file names, such as MS-DOS@.
+ 
+-@itemx --help
+-@itemx --target-help
+ @opindex help
+ @opindex target-help
+ Print text describing all the command line options instead of
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/gcc.texi cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/gcc.texi
+--- cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/doc/gcc.texi	2009-05-19 03:16:21.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/doc/gcc.texi	2020-12-10 21:04:38.985792785 -1000
+@@ -74,134 +74,4 @@
+ @sp 1
+ @end ifnottex
+ 
+-@setchapternewpage odd
+-@titlepage
+-@title Using the GNU Compiler Collection
+-@versionsubtitle
+-@author Richard M. Stallman and the @sc{GCC} Developer Community
+-@page
+-@vskip 0pt plus 1filll
+-Published by:
+-@multitable @columnfractions 0.5 0.5
+-@item GNU Press
+-@tab Website: www.gnupress.org
+-@item a division of the
+-@tab General: @tex press@@gnu.org @end tex
+-@item Free Software Foundation
+-@tab Orders:  @tex sales@@gnu.org @end tex
+-@item 51 Franklin Street, Fifth Floor
+-@tab Tel 617-542-5942
+-@item Boston, MA 02110-1301 USA
+-@tab Fax 617-542-2652
+-@end multitable
+-@sp 2
+-@ifset FSFPRINT
+-@c Update this ISBN when printing a new edition.
+-@acronym{ISBN} 1-882114-39-6
+-
+-Cover art by Gary M. Torrisi.  Cover design by Jonathan Richard.
+-@end ifset
+-@ifclear FSFPRINT
+-Last printed October 2003 for GCC 3.3.1.@*
+-Printed copies are available for $45 each.
+-@end ifclear
+-@sp 1
+-@insertcopying
+-@end titlepage
+-@summarycontents
+-@contents
+-@page
+-
+-@node Top, G++ and GCC,, (DIR)
+-@top Introduction
+-@cindex introduction
+-
+-This manual documents how to use the GNU compilers,
+-as well as their features and incompatibilities, and how to report
+-bugs.  It corresponds to the compilers
+-@ifset VERSION_PACKAGE
+-@value{VERSION_PACKAGE}
+-@end ifset
+-version @value{version-GCC}.
+-The internals of the GNU compilers, including how to port them to new
+-targets and some information about how to write front ends for new
+-languages, are documented in a separate manual.  @xref{Top,,
+-Introduction, gccint, GNU Compiler Collection (GCC) Internals}.
+-
+-@menu
+-* G++ and GCC::     You can compile C or C++ programs.
+-* Standards::       Language standards supported by GCC.
+-* Invoking GCC::    Command options supported by @samp{gcc}.
+-* C Implementation:: How GCC implements the ISO C specification.
+-* C Extensions::    GNU extensions to the C language family.
+-* C++ Extensions::  GNU extensions to the C++ language.
+-* Objective-C::     GNU Objective-C runtime features.
+-* Compatibility::   Binary Compatibility
+-* Gcov::            @command{gcov}---a test coverage program.
+-* Trouble::         If you have trouble using GCC.
+-* Bugs::            How, why and where to report bugs.
+-* Service::         How to find suppliers of support for GCC.
+-* Contributing::    How to contribute to testing and developing GCC.
+-
+-* Funding::         How to help assure funding for free software.
+-* GNU Project::     The GNU Project and GNU/Linux.
+-
+-* Copying::         GNU General Public License says
+-                    how you can copy and share GCC.
+-* GNU Free Documentation License:: How you can copy and share this manual.
+-* Contributors::    People who have contributed to GCC.
+-
+-* Option Index::    Index to command line options.
+-* Keyword Index::   Index of concepts and symbol names.
+-@end menu
+-
+-@include frontends.texi
+-@include standards.texi
+-@include invoke.texi
+-@include implement-c.texi
+-@include extend.texi
+-@include objc.texi
+-@include compat.texi
+-@include gcov.texi
+-@include trouble.texi
+-@include bugreport.texi
+-@include service.texi
+-@include contribute.texi
+-
+-@include funding.texi
+-@include gnu.texi
+-@include gpl_v3.texi
+-
+-@c ---------------------------------------------------------------------
+-@c GFDL
+-@c ---------------------------------------------------------------------
+-
+-@include fdl.texi
+-
+-@include contrib.texi
+-
+-@c ---------------------------------------------------------------------
+-@c Indexes
+-@c ---------------------------------------------------------------------
+-
+-@node Option Index
+-@unnumbered Option Index
+-
+-GCC's command line options are indexed here without any initial @samp{-}
+-or @samp{--}.  Where an option has both positive and negative forms
+-(such as @option{-f@var{option}} and @option{-fno-@var{option}}),
+-relevant entries in the manual are indexed under the most appropriate
+-form; it may sometimes be useful to look up both forms.
+-
+-@printindex op
+-
+-@node Keyword Index
+-@unnumbered Keyword Index
+-
+-@printindex cp
+-
+-@c ---------------------------------------------------------------------
+-@c Epilogue
+-@c ---------------------------------------------------------------------
+-
+ @bye
+diff -Naur cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/toplev.h cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/toplev.h
+--- cegcc-code-r1449-trunk/cegcc/src/gcc-4.4.0/gcc/toplev.h	2009-05-20 04:34:28.000000000 -1000
++++ cegcc-code-r1449-trunk-gcc10/cegcc/src/gcc-4.4.0/gcc/toplev.h	2020-12-10 21:01:57.805246343 -1000
+@@ -186,17 +186,17 @@
+ #  define CTZ_HWI __builtin_ctz
+ # endif
+ 
+-extern inline int
+-floor_log2 (unsigned HOST_WIDE_INT x)
+-{
+-  return x ? HOST_BITS_PER_WIDE_INT - 1 - (int) CLZ_HWI (x) : -1;
+-}
++//extern inline int
++//floor_log2 (unsigned HOST_WIDE_INT x)
++//{
++//  return x ? HOST_BITS_PER_WIDE_INT - 1 - (int) CLZ_HWI (x) : -1;
++//}
+ 
+-extern inline int
+-exact_log2 (unsigned HOST_WIDE_INT x)
+-{
+-  return x == (x & -x) && x ? (int) CTZ_HWI (x) : -1;
+-}
++//extern inline int
++//exact_log2 (unsigned HOST_WIDE_INT x)
++//{
++//  return x == (x & -x) && x ? (int) CTZ_HWI (x) : -1;
++//}
+ #endif /* GCC_VERSION >= 3004 */
+ 
+ /* Functions used to get and set GCC's notion of in what directory
