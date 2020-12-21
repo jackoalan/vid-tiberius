@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.13)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 11)
 
@@ -8,12 +8,14 @@ include(CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("#ifndef __MINGW32__\n#error fail\n#endif\nint main() {}" IS_MINGW)
 
 if(NOT IS_MINGW)
+  include(FindPkgConfig)
+  pkg_check_modules(ffmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libavdevice libswscale libavutil)
   add_executable(vid-sender vid_sender.cpp control_interface.h ff_helpers.h)
   target_link_libraries(vid-sender PUBLIC avformat avcodec avdevice swscale avutil)
   target_link_options(vid-sender PUBLIC -pthread)
   add_executable(vid-simplereceiver vid_simplereceiver.cpp vid_receiver_common.h
                  control_interface.h ff_helpers.h)
-  target_link_libraries(vid-simplereceiver PUBLIC avformat avcodec avdevice swscale avutil)
+  target_link_libraries(vid-simplereceiver PUBLIC PkgConfig::ffmpeg)
 else()
   get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vid_receiver_res.o"
