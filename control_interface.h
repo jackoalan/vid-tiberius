@@ -17,9 +17,9 @@ typedef int SOCKET;
 typedef void *sock_dptr_t;
 #endif
 
-#define CTRL_NET_PATH "10.10.10.10"
-#define VIDEO_NET_PATH "rtp://10.10.20.10:1936"
-#define SNAPSHOT_NET_PATH "rtp://10.10.20.10:1938"
+#define CTRL_NET_PATH "10.20.0.20"
+#define VIDEO_NET_PATH "rtp://10.10.0.20:1936"
+#define SNAPSHOT_NET_PATH "rtp://10.10.0.20:1938"
 //#define VIDEO_NET_PATH "rtp://127.0.0.1:1936"
 //#define SNAPSHOT_NET_PATH "rtp://127.0.0.1:1938"
 #define CONTROL_PORT 1940
