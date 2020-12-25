@@ -48,7 +48,7 @@ CFLAGS="-mwin32 -DWINCE -D_WIN32_IE=0x0600 -D_WIN32_WCE=0x0600 -D__CE_VERSION__=
 
 Then `make`, `make install` ffmpeg as usual
 
-### Building Sender
+### Building and Installing Sender
 
 ```shell script
 cd <path-to-repository>
@@ -56,9 +56,10 @@ mkdir build-sender
 cd build-sender
 cmake ..
 cmake --build .
+cmake --install .
 ```
 
-*Install target and systemd service coming soon*
+Installing also provides a systemd service named `vid-sender`.
 
 ### Building Receiver
 

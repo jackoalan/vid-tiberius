@@ -1,0 +1,11 @@
+[Unit]
+Description=Tiberius Video Sender
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=vid-sender
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

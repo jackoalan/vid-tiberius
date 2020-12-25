@@ -8,7 +8,6 @@ extern "C" {
 }
 
 #include <atomic>
-#include <csignal>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/videodev2.h>
@@ -16,12 +15,6 @@ extern "C" {
 
 #include "control_interface.h"
 #include "ff_helpers.h"
-
-static std::atomic_bool g_terminate{};
-void term_handler(int) {
-  av_log(nullptr, AV_LOG_INFO, "terminating...\n");
-  g_terminate = true;
-}
 
 // ffmpeg -f video4linux2 -r 10 -video_size 432x240 -i /dev/video0 -f h264
 // -vcodec libx264 -crf 30 -maxrate 128k -bufsize 1M -preset medium -tune
@@ -102,6 +95,7 @@ public:
     fmt_dec_ctx = avformat_alloc_context();
     fmt_dec_ctx->flags |= AVFMT_FLAG_NONBLOCK;
     ret = avformat_open_input(&fmt_dec_ctx, dev_path, v4l2_fmt, &opts);
+    av_dict_free(&opts);
     avdevice_free_list_devices(&dev_list);
     if (ret < 0) {
       av_log(nullptr, AV_LOG_ERROR, "Unable to avformat_open_input: %s\n",
@@ -121,11 +115,11 @@ public:
   }
 
   bool init(const char *video_size = VIDEO_SIZE) {
-    while (!g_terminate && !_init(video_size)) {
+    while (!_init(video_size)) {
       struct timespec ts = {0, 500000000};
       nanosleep(&ts, nullptr);
     }
-    return !g_terminate;
+    return true;
   }
 
   void deinit() {
@@ -193,12 +187,12 @@ public:
     AVDictionary *opts = nullptr;
     set_options(opts);
     int ret = avcodec_open2(video_enc_ctx, codec, &opts);
+    av_dict_free(&opts);
     if (ret < 0) {
       av_log(nullptr, AV_LOG_ERROR, "Unable to avcodec_open2: %s\n",
              av_err2str_cpp(ret));
       return false;
     }
-    av_dict_free(&opts);
 
     ret = avformat_alloc_output_context2(&fmt_enc_context, nullptr, "rtp",
                                          net_path);
@@ -231,7 +225,10 @@ public:
       return false;
     }
 
-    ret = avformat_write_header(fmt_enc_context, nullptr);
+    av_dict_set(&opts, "keyframe_replay_params", "1", 0);
+    set_options(opts);
+    ret = avformat_write_header(fmt_enc_context, &opts);
+    av_dict_free(&opts);
     if (ret < 0) {
       av_log(nullptr, AV_LOG_ERROR, "Unable to avformat_write_header: %s\n",
              av_err2str_cpp(ret));
@@ -262,9 +259,12 @@ public:
       AVPacket pkt = {};
 
       ret = avcodec_receive_packet(video_enc_ctx, &pkt);
-      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+      if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        av_packet_unref(&pkt);
         break;
+      }
       else if (ret < 0) {
+        av_packet_unref(&pkt);
         av_log(nullptr, AV_LOG_ERROR, "Error encoding a net_frame: %s\n",
                av_err2str_cpp(ret));
         return false;
@@ -325,7 +325,7 @@ struct V4L2m2mPriv {
 
 class H264EncodeContext : public EncodeContext {
 public:
-  static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUV420P;
+  static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUYV422;
   H264EncodeContext()
       : EncodeContext("h264_v4l2m2m", VIDEO_NET_PATH, pix_fmt) {}
 
@@ -395,6 +395,7 @@ public:
 
 template <class EncodeContext> class EncoderPipeline {
   EncodeContext enc;
+  AVPixelFormat cam_pix_fmt = AV_PIX_FMT_NONE;
   AVFrame *cam_frame = nullptr;
   AVFrame *sws_frame = nullptr;
   SwsContext *sws_ctx = nullptr;
@@ -429,6 +430,7 @@ public:
       return false;
     }
 
+    cam_pix_fmt = cam.pix_fmt();
     sws_ctx = sws_getContext(cam.width(), cam.height(), cam.pix_fmt(),
                              cam.width(), cam.height(), EncodeContext::pix_fmt,
                              0, nullptr, nullptr, nullptr);
@@ -446,17 +448,20 @@ public:
     av_frame_free(&cam_frame);
     sws_freeContext(sws_ctx);
     sws_ctx = nullptr;
+    cam_pix_fmt = AV_PIX_FMT_NONE;
   }
 
   bool output_video_frame(int64_t pts) {
-    sws_scale(sws_ctx, (const uint8_t *const *)cam_frame->data,
-              cam_frame->linesize, 0, cam_frame->height, sws_frame->data,
-              sws_frame->linesize);
+    AVFrame *use_frame = cam_pix_fmt == EncodeContext::pix_fmt ? cam_frame : sws_frame;
+    if (use_frame == sws_frame)
+      sws_scale(sws_ctx, (const uint8_t *const *)cam_frame->data,
+                cam_frame->linesize, 0, cam_frame->height, sws_frame->data,
+                sws_frame->linesize);
 
-    sws_frame->pts = pts;
-    sws_frame->pict_type = next_pict_type;
+    use_frame->pts = pts;
+    use_frame->pict_type = next_pict_type;
     next_pict_type = AV_PICTURE_TYPE_NONE;
-    return enc.encode(sws_frame);
+    return enc.encode(use_frame);
   }
 
   bool decode_packet(CameraGrabber &cam, const AVPacket &dec_pkt, int64_t pts) {
@@ -593,19 +598,18 @@ public:
 };
 
 int main(int argc, char **argv) {
-  signal(SIGINT, term_handler);
-  signal(SIGTERM, term_handler);
+  // av_log_set_level(AV_LOG_DEBUG);
 
   /* Enable webcam capture */
   avdevice_register_all();
 
   TranscodeContext ctx;
   if (!ctx.init())
-    return g_terminate ? 0 : 1;
+    return 1;
 
-  while (!g_terminate) {
+  while (true) {
     if (!ctx.do_frame())
-      return g_terminate ? 0 : 1;
+      return 1;
   }
 
   return 0;

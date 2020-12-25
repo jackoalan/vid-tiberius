@@ -11,7 +11,7 @@ if(NOT IS_MINGW)
   include(FindPkgConfig)
   pkg_check_modules(ffmpeg REQUIRED IMPORTED_TARGET libavformat libavcodec libavdevice libswscale libavutil)
   add_executable(vid-sender vid_sender.cpp control_interface.h ff_helpers.h)
-  target_link_libraries(vid-sender PUBLIC avformat avcodec avdevice swscale avutil)
+  target_link_libraries(vid-sender PUBLIC PkgConfig::ffmpeg)
   target_link_options(vid-sender PUBLIC -pthread)
   if(V4L2_ENCODE)
     target_compile_definitions(vid-sender PUBLIC V4L2_ENCODE)
@@ -19,6 +19,9 @@ if(NOT IS_MINGW)
   add_executable(vid-simplereceiver vid_simplereceiver.cpp vid_receiver_common.h
                  control_interface.h ff_helpers.h)
   target_link_libraries(vid-simplereceiver PUBLIC PkgConfig::ffmpeg)
+
+  install(TARGETS vid-sender RUNTIME DESTINATION bin)
+  install(FILES vid-sender.service DESTINATION lib/systemd/system)
 else()
   get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vid_receiver_res.o"
