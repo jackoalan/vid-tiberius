@@ -262,8 +262,7 @@ public:
       if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
         av_packet_unref(&pkt);
         break;
-      }
-      else if (ret < 0) {
+      } else if (ret < 0) {
         av_packet_unref(&pkt);
         av_log(nullptr, AV_LOG_ERROR, "Error encoding a net_frame: %s\n",
                av_err2str_cpp(ret));
@@ -452,7 +451,8 @@ public:
   }
 
   bool output_video_frame(int64_t pts) {
-    AVFrame *use_frame = cam_pix_fmt == EncodeContext::pix_fmt ? cam_frame : sws_frame;
+    AVFrame *use_frame =
+        cam_pix_fmt == EncodeContext::pix_fmt ? cam_frame : sws_frame;
     if (use_frame == sws_frame)
       sws_scale(sws_ctx, (const uint8_t *const *)cam_frame->data,
                 cam_frame->linesize, 0, cam_frame->height, sws_frame->data,
