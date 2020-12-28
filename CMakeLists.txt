@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 11)
 project(vid-tiberius)
 
 include(CheckCSourceCompiles)
-CHECK_C_SOURCE_COMPILES("#ifndef __MINGW32__\n#error fail\n#endif\nint main() {}" IS_MINGW)
+check_c_source_compiles("#ifndef __MINGW32__\n#error fail\n#endif\nint main() {}" IS_MINGW)
 
 if(NOT IS_MINGW)
   include(FindPkgConfig)
@@ -21,7 +21,7 @@ if(NOT IS_MINGW)
   target_link_libraries(vid-simplereceiver PUBLIC PkgConfig::ffmpeg)
 
   install(TARGETS vid-sender RUNTIME DESTINATION bin)
-  install(FILES vid-sender.service DESTINATION lib/systemd/system)
+  install(FILES vid-sender-front.service DESTINATION lib/systemd/system)
 else()
   get_filename_component(COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vid_receiver_res.o"

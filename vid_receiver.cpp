@@ -15,6 +15,7 @@ extern "C" {
 
 #define WAITING_WIDTH 432
 #define WAITING_HEIGHT 240
+#define CTRL_WIDTH 432
 
 static HINSTANCE AppInstance = nullptr;
 static HICON SnapIcon = nullptr;
@@ -25,8 +26,9 @@ static HGDIOBJ OldVideoMemDcObj = nullptr;
 static DWORD MainThreadId = 0;
 static CRITICAL_SECTION PaintCritSec;
 static HWND Hwnd = nullptr;
-static HWND SnapshotButton = nullptr;
+static HWND ControlsButton = nullptr;
 static HWND QualityTrackbar = nullptr;
+static HWND CtrlHwnd = nullptr;
 static int ReqWidth = 0, ReqHeight = 0;
 static int WindowWidth = 0, WindowHeight = 0;
 static int BMPWidth = 0, BMPHeight = 0;
@@ -35,7 +37,8 @@ static const char *Title = nullptr;
 static const char *Comment = nullptr;
 static sockaddr_in SdpAddr = {};
 static int SdpPort = 0;
-bool NoQuit = false;
+static bool NoQuit = false;
+static std::vector<uint8_t> Ctrls;
 
 static volatile bool g_running = true;
 
@@ -64,7 +67,7 @@ static DWORD WINAPI VideoTask(LPVOID firstArg) {
                       nullptr, nullptr);
   printf("Opening %s\n", sdp_path);
 
-  DisplayContext ctx(sdp_path, ControlInterface::make_addr(CTRL_NET_PATH));
+  DisplayContext ctx(sdp_path);
   if (!ctx.init(MessageErrorToUser))
     abort();
 
@@ -126,6 +129,14 @@ void DisplaySnapshotFrame(SwsContext *sws_ctx, AVFrame *net_frame) {
   PostThreadMessage(MainThreadId, WM_USER + 1, 0, 0);
 }
 
+void UpdateCtrlMenu(std::vector<uint8_t>::const_iterator begin,
+                    std::vector<uint8_t>::const_iterator end) {
+  EnterCriticalSection(&PaintCritSec);
+  Ctrls.assign(begin, end);
+  LeaveCriticalSection(&PaintCritSec);
+  PostThreadMessage(MainThreadId, WM_USER + 3, 0, 0);
+}
+
 static void CreateControls(HWND parent);
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
@@ -151,7 +162,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
       PostQuitMessage(0);
     }
     Hwnd = nullptr;
-    SnapshotButton = nullptr;
+    ControlsButton = nullptr;
     QualityTrackbar = nullptr;
     return 0;
   case WM_PAINT: {
@@ -195,7 +206,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
   case WM_DRAWITEM: {
     DefWindowProc(hwnd, uMsg, wParam, lParam);
     LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lParam;
-    if (di->hwndItem == SnapshotButton) {
+    if (di->hwndItem == ControlsButton) {
       DrawFrameControl(di->hDC, &di->rcItem, DFC_BUTTON,
                        DFCS_BUTTONPUSH |
                            ((di->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0));
@@ -204,9 +215,19 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
     return TRUE;
   }
   case WM_COMMAND: {
-    if (HWND(lParam) == SnapshotButton) {
-      fprintf(stderr, "requesting snapshot\n");
-      g_dispCtx->send_req_snapshot();
+    if (HWND(lParam) == ControlsButton && CtrlHwnd) {
+      RECT rect;
+      GetWindowRect(Hwnd, &rect);
+      LONG x = rect.left;
+      LONG y = rect.top;
+
+      if (x < CTRL_WIDTH)
+        x += rect.right - rect.left;
+      else
+        x -= CTRL_WIDTH;
+
+      SetWindowPos(CtrlHwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE);
+      ShowWindow(CtrlHwnd, SW_SHOW);
     }
     return 0;
   }
@@ -254,7 +275,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
 static WNDCLASS WindowClass = {0,       WindowProc,
                                0,       0,
                                nullptr, nullptr,
-                               nullptr, (HBRUSH)COLOR_WINDOW,
+                               nullptr, (HBRUSH)(COLOR_WINDOW + 1),
                                nullptr, TEXT("tiberius-video")};
 #define WindowStyle (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU)
 
@@ -321,7 +342,7 @@ static LRESULT CALLBACK SnapshotWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
 static WNDCLASS SnapshotWindowClass = {0,       SnapshotWindowProc,
                                        0,       5 * sizeof(LONG_PTR),
                                        nullptr, nullptr,
-                                       nullptr, (HBRUSH)COLOR_WINDOW,
+                                       nullptr, (HBRUSH)(COLOR_WINDOW + 1),
                                        nullptr, TEXT("tiberius-snapshot")};
 
 static LRESULT CALLBACK WaitingWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
@@ -368,14 +389,107 @@ static LRESULT CALLBACK WaitingWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
 static WNDCLASS WaitingWindowClass = {0,       WaitingWindowProc,
                                       0,       0,
                                       nullptr, nullptr,
-                                      nullptr, (HBRUSH)COLOR_WINDOW,
+                                      nullptr, (HBRUSH)(COLOR_WINDOW + 1),
                                       nullptr, TEXT("tiberius-waiting")};
 
-static void CreateSnapshotButton(HWND parent) {
-  if (SnapshotButton)
-    DestroyWindow(SnapshotButton);
+static void CreateCtrlControls(HWND parent);
 
-  SnapshotButton =
+static LRESULT CALLBACK CtrlWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam,
+                                       LPARAM lParam) {
+  switch (uMsg) {
+  case WM_CREATE:
+    CreateCtrlControls(hwnd);
+    return 0;
+  case WM_DESTROY:
+    CtrlHwnd = nullptr;
+    return 0;
+  case WM_CLOSE:
+    ShowWindow(hwnd, SW_HIDE);
+    return 0;
+  case WM_HSCROLL: {
+    int ctrlId = GetDlgCtrlID(HWND(lParam));
+    switch (LOWORD(wParam)) {
+    case TB_ENDTRACK: {
+      DWORD dwPos = SendMessage(HWND(lParam), TBM_GETPOS, 0, 0);
+      fprintf(stderr, "sending integer: %08X, %lu\n", ctrlId, dwPos);
+      g_dispCtx->send_ctrl(V4L2_CTRL_CLASS_CAMERA | ctrlId, dwPos);
+      break;
+    }
+    default:
+      break;
+    }
+    return 0;
+  }
+  case WM_COMMAND: {
+    if (HIWORD(wParam) == CBN_SELCHANGE) {
+      DWORD idx = SendMessage(HWND(lParam), CB_GETCURSEL, 0, 0);
+      DWORD m = SendMessage(HWND(lParam), CB_GETITEMDATA, idx, 0);
+      fprintf(stderr, "sending menu: %08X, %lu\n", LOWORD(wParam), m);
+      g_dispCtx->send_ctrl(V4L2_CTRL_CLASS_CAMERA | LOWORD(wParam), m);
+      return 0;
+    } else if (HIWORD(wParam) == BN_CLICKED) {
+      DWORD checked =
+          SendMessage(HWND(lParam), BM_GETCHECK, 0, 0) == BST_CHECKED ? 0 : 1;
+      SendMessage(HWND(lParam), BM_SETCHECK,
+                  checked ? BST_CHECKED : BST_UNCHECKED, 0);
+      fprintf(stderr, "sending boolean: %08X, %lu\n", LOWORD(wParam), checked);
+      g_dispCtx->send_ctrl(V4L2_CTRL_CLASS_CAMERA | LOWORD(wParam), checked);
+      return 0;
+    } else {
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+  }
+  case WM_PAINT: {
+    EnterCriticalSection(&PaintCritSec);
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+
+    SetBkMode(dc, TRANSPARENT);
+    LONG y = 10;
+    ControlReader reader(Ctrls.begin(), Ctrls.end());
+    while (reader) {
+      v4l2_queryctrl ctrl = reader.read_ctrl();
+      if ((ctrl.id & 0xffff0000) != V4L2_CTRL_CLASS_CAMERA)
+        continue;
+      switch (ctrl.type) {
+      case V4L2_CTRL_TYPE_MENU:
+        for (int m = ctrl.minimum; m <= ctrl.maximum; ++m)
+          reader.read_menu();
+        // fallthrough
+      case V4L2_CTRL_TYPE_INTEGER:
+      case V4L2_CTRL_TYPE_BOOLEAN: {
+        wchar_t nameBuf[32];
+        MultiByteToWideChar(CP_ACP, 0, (LPCSTR)ctrl.name, -1, nameBuf, 32);
+        RECT textRect = {10, y, 150, y + 30};
+        DrawText(dc, nameBuf, -1, &textRect, DT_RIGHT | DT_VCENTER);
+        break;
+      }
+      default:
+        break;
+      }
+      y += 40;
+    }
+
+    EndPaint(hwnd, &ps);
+    LeaveCriticalSection(&PaintCritSec);
+    return 0;
+  }
+  default:
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+  }
+}
+
+static WNDCLASS CtrlWindowClass = {0,       CtrlWindowProc,
+                                   0,       0,
+                                   nullptr, nullptr,
+                                   nullptr, (HBRUSH)(COLOR_WINDOW + 1),
+                                   nullptr, TEXT("tiberius-ctrl")};
+
+static void CreateControlsButton(HWND parent) {
+  if (ControlsButton)
+    DestroyWindow(ControlsButton);
+
+  ControlsButton =
       CreateWindow(WC_BUTTON, TEXT(""), WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 0,
                    WindowHeight, 30, 30, parent, nullptr, AppInstance, nullptr);
 }
@@ -396,8 +510,80 @@ static void CreateQualityTrackbar(HWND parent) {
 }
 
 static void CreateControls(HWND parent) {
-  CreateSnapshotButton(parent);
+  CreateControlsButton(parent);
   CreateQualityTrackbar(parent);
+}
+
+static void CreateIntegerControl(HWND parent, LONG y,
+                                 const v4l2_queryctrl &ctrl) {
+  DWORD ticks = ctrl.maximum - ctrl.minimum < 100 ? TBS_AUTOTICKS : 0;
+
+  HWND hwnd = CreateWindow(TRACKBAR_CLASS, L"", WS_CHILD | WS_VISIBLE | ticks,
+                           160, y, CTRL_WIDTH - 170, 30, parent,
+                           (HMENU)(ctrl.id & 0xffff), AppInstance, nullptr);
+
+  SendMessage(hwnd, TBM_SETRANGEMIN, TRUE, ctrl.minimum);
+  SendMessage(hwnd, TBM_SETRANGEMAX, TRUE, ctrl.maximum);
+  SendMessage(hwnd, TBM_SETPAGESIZE, 0, ctrl.step);
+  SendMessage(hwnd, TBM_SETPOS, TRUE, ctrl.default_value);
+}
+
+static void CreateBooleanControl(HWND parent, LONG y,
+                                 const v4l2_queryctrl &ctrl) {
+  HWND hwnd = CreateWindow(WC_BUTTON, L"", WS_CHILD | WS_VISIBLE | BS_CHECKBOX,
+                           170, y, CTRL_WIDTH - 180, 30, parent,
+                           (HMENU)(ctrl.id & 0xffff), AppInstance, nullptr);
+
+  SendMessage(hwnd, BM_SETCHECK,
+              ctrl.default_value ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+static void CreateMenuControl(HWND parent, LONG y, const v4l2_queryctrl &ctrl,
+                              ControlReader &reader) {
+  HWND hwnd = CreateWindow(
+      WC_COMBOBOX, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST, 160, y + 5,
+      CTRL_WIDTH - 170, 30 * (ctrl.maximum - ctrl.minimum + 1), parent,
+      (HMENU)(ctrl.id & 0xffff), AppInstance, nullptr);
+
+  int defaultIdx = -1;
+  for (int m = ctrl.minimum; m <= ctrl.maximum; ++m) {
+    v4l2_querymenu menu = reader.read_menu();
+    if (strlen((char *)menu.name) == 0)
+      continue;
+    wchar_t menuBuf[32] = {};
+    MultiByteToWideChar(CP_ACP, 0, (LPCSTR)menu.name, -1, menuBuf, 32);
+    LRESULT idx = SendMessage(hwnd, CB_ADDSTRING, 0, (LPARAM)menuBuf);
+    SendMessage(hwnd, CB_SETITEMDATA, idx, (LPARAM)m);
+    if (m == ctrl.default_value)
+      defaultIdx = idx;
+  }
+
+  if (defaultIdx != -1)
+    SendMessage(hwnd, CB_SETCURSEL, defaultIdx, 0);
+}
+
+static void CreateCtrlControls(HWND parent) {
+  LONG y = 10;
+  ControlReader reader(Ctrls.begin(), Ctrls.end());
+  while (reader) {
+    v4l2_queryctrl ctrl = reader.read_ctrl();
+    if ((ctrl.id & 0xffff0000) != V4L2_CTRL_CLASS_CAMERA)
+      continue;
+    switch (ctrl.type) {
+    case V4L2_CTRL_TYPE_INTEGER:
+      CreateIntegerControl(parent, y, ctrl);
+      break;
+    case V4L2_CTRL_TYPE_BOOLEAN:
+      CreateBooleanControl(parent, y, ctrl);
+      break;
+    case V4L2_CTRL_TYPE_MENU:
+      CreateMenuControl(parent, y, ctrl, reader);
+      break;
+    default:
+      break;
+    }
+    y += 40;
+  }
 }
 
 static RECT MakeWindowRect(int x, int y, int width, int height) {
@@ -421,9 +607,9 @@ static RECT MakeWindowRect(int x, int y, int width, int height) {
 }
 
 static void GetCommentXY(LONG &x, LONG &y) {
-  if (char *p = strstr(Comment, "x:"))
+  if (const char *p = strstr(Comment, "x:"))
     x = strtol(p + 2, nullptr, 10);
-  if (char *p = strstr(Comment, "y:"))
+  if (const char *p = strstr(Comment, "y:"))
     y = strtol(p + 2, nullptr, 10);
 }
 
@@ -515,6 +701,60 @@ static void HandleAddrInfo() {
   SetWindowPos(Hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
 
+static void HandleCtrls() {
+  EnterCriticalSection(&PaintCritSec);
+  if (CtrlHwnd)
+    DestroyWindow(CtrlHwnd);
+
+  wchar_t windowTitleBuf[128];
+  wchar_t *windowTitle = nullptr;
+  if (Title) {
+    wchar_t windowTitleConv[128];
+    MultiByteToWideChar(CP_ACP, 0, Title, -1, windowTitleConv, 128);
+    snwprintf(windowTitleBuf, 128, L"%s Controls", windowTitleConv);
+    windowTitle = windowTitleBuf;
+  }
+
+  LONG x = 0, y = 0, w = 0, h = 10;
+  RECT rect;
+  if (Hwnd && GetWindowRect(Hwnd, &rect)) {
+    x = rect.left;
+    y = rect.top;
+    w = rect.right - rect.left;
+  } else {
+    GetCommentXY(x, y);
+    w = WAITING_WIDTH;
+  }
+
+  if (x < CTRL_WIDTH)
+    x += w;
+  else
+    x -= CTRL_WIDTH;
+
+  ControlReader reader(Ctrls.begin(), Ctrls.end());
+  while (reader) {
+    v4l2_queryctrl ctrl = reader.read_ctrl();
+    if ((ctrl.id & 0xffff0000) != V4L2_CTRL_CLASS_CAMERA)
+      continue;
+    h += 40;
+    if (ctrl.type == V4L2_CTRL_TYPE_MENU) {
+      for (int m = ctrl.minimum; m <= ctrl.maximum; ++m) {
+        reader.read_menu();
+      }
+    }
+  }
+
+  rect = MakeWindowRect(x, y, CTRL_WIDTH, h);
+
+  CtrlHwnd = CreateWindow(
+      TEXT("tiberius-ctrl"), windowTitle ? windowTitle : L"NO NAME",
+      WindowStyle, rect.left, rect.top, rect.right - rect.left,
+      rect.bottom - rect.top, nullptr, nullptr, AppInstance, nullptr);
+  SetWindowPos(CtrlHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+  LeaveCriticalSection(&PaintCritSec);
+}
+
 static int LaunchFoundSDPs(HINSTANCE hInstance) {
   WCHAR module_path[MAX_PATH];
   GetModuleFileName(hInstance, module_path, MAX_PATH);
@@ -574,14 +814,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   InitializeCriticalSection(&PaintCritSec);
   HANDLE VideoThread = CreateThread(nullptr, 0, VideoTask, argv[0], 0, nullptr);
 
+  HBRUSH undocBrush = GetSysColorBrush(SYSTEM_COLOR_BASE_OFFSET + 25);
+
   WindowClass.hInstance = hInstance;
+  WindowClass.hbrBackground = undocBrush;
   RegisterClass(&WindowClass);
 
   SnapshotWindowClass.hInstance = hInstance;
+  SnapshotWindowClass.hbrBackground = undocBrush;
   RegisterClass(&SnapshotWindowClass);
 
   WaitingWindowClass.hInstance = hInstance;
+  WaitingWindowClass.hbrBackground = undocBrush;
   RegisterClass(&WaitingWindowClass);
+
+  CtrlWindowClass.hInstance = hInstance;
+  CtrlWindowClass.hbrBackground = undocBrush;
+  RegisterClass(&CtrlWindowClass);
 
   while (g_running) {
     MSG msg;
@@ -592,6 +841,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         HandleSnapshotFrame();
       } else if (msg.message == WM_USER + 2) {
         HandleAddrInfo();
+      } else if (msg.message == WM_USER + 3) {
+        HandleCtrls();
       } else {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
@@ -604,7 +855,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   av_log(nullptr, AV_LOG_INFO, "waiting for exit\n");
-  WaitForSingleObject(VideoThread, 2000);
+  WaitForSingleObject(VideoThread, 1000);
   WSACleanup();
   av_log(nullptr, AV_LOG_INFO, "exiting\n");
 

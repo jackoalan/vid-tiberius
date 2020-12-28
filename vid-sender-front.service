@@ -1,10 +1,10 @@
 [Unit]
-Description=Tiberius Video Sender
+Description=Tiberius Video Sender (Front Camera)
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-ExecStart=vid-sender
+ExecStart=vid-sender "HD Webcam C615" 10.10.0.20 1936 1938 1940
 Restart=always
 
 [Install]

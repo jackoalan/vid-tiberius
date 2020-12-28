@@ -75,6 +75,28 @@ typedef struct RTSPStream {
   int sdp_payload_type;     /**< payload type */
   //@}
 } RTSPStream;
+
+typedef struct URLContext {
+  const AVClass *av_class;    /**< information for av_log(). Set by url_open(). */
+  const struct URLProtocol *prot;
+  void *priv_data;
+} URLContext;
+
+typedef struct IPSourceFilters {
+  int nb_include_addrs;
+  int nb_exclude_addrs;
+  struct sockaddr_storage *include_addrs;
+  struct sockaddr_storage *exclude_addrs;
+} IPSourceFilters;
+
+typedef struct RTPContext {
+  const AVClass *clazz;
+  URLContext *rtp_hd, *rtcp_hd, *fec_hd;
+  int rtp_fd, rtcp_fd;
+  IPSourceFilters filters;
+  int write_to_source;
+  struct sockaddr_storage last_rtp_source, last_rtcp_source;
+} RTPContext;
 /* clang-format on */
 }
 
@@ -196,6 +218,7 @@ class NetworkGrabber {
   AVFormatContext *fmt_dec_ctx;
   const char *cached_title;
   const char *cached_comment;
+  uint16_t cached_ctrl_port;
 
   const char *get_metadata(const char *key, const char *&cache_var) {
     if (cache_var)
@@ -214,7 +237,7 @@ class NetworkGrabber {
 public:
   NetworkGrabber(const char *sdp_path)
       : sdp_path(sdp_path), fmt_dec_ctx(nullptr), cached_title(nullptr),
-        cached_comment(nullptr) {}
+        cached_comment(nullptr), cached_ctrl_port(0) {}
   ~NetworkGrabber() { deinit(); }
 
   bool init(void (*err_handler)(const char *, ...)) {
@@ -258,6 +281,15 @@ public:
   DecodeContext &dec_ctx(int i) { return dec_ctxs[i]; }
   const char *title() { return get_metadata("title", cached_title); }
   const char *comment() { return get_metadata("comment", cached_comment); }
+
+  uint16_t ctrl_port() {
+    if (cached_ctrl_port)
+      return cached_ctrl_port;
+    if (const char *p = strstr(comment(), "c:"))
+      cached_ctrl_port = strtol(p + 2, nullptr, 10);
+    return cached_ctrl_port;
+  }
+
   struct sockaddr_storage sdp_ip(int &port) {
     sockaddr_storage sdp_ip{};
     RTSPState *rt = (RTSPState *)fmt_dec_ctx->priv_data;
@@ -269,10 +301,43 @@ public:
     return sdp_ip;
   }
 
-  bool read_frame(AVPacket &pkt) {
+  struct sockaddr_storage last_rtp_source() {
+    sockaddr_storage addr{};
+    RTSPState *rt = (RTSPState *)fmt_dec_ctx->priv_data;
+    if (rt->nb_rtsp_streams) {
+      RTSPStream *s = rt->rtsp_streams[0];
+      if (s->rtp_handle) {
+        RTPContext *rtp = (RTPContext *)s->rtp_handle->priv_data;
+        addr = rtp->last_rtp_source;
+      }
+    }
+    return addr;
+  }
+
+  bool read_frame(AVPacket &pkt, struct sockaddr_in &ctrl_addr) {
     int err = av_read_frame(fmt_dec_ctx, &pkt);
-    if (err >= 0)
+    if (err >= 0) {
+      if (!ctrl_addr.sin_port) {
+        ctrl_addr.sin_family = AF_INET;
+        ctrl_addr.sin_port = htons(ctrl_port());
+      }
+
+      struct sockaddr_storage last_addr = last_rtp_source();
+      struct sockaddr_in last_addr_in {};
+      memcpy(&last_addr_in, &last_addr, sizeof(last_addr_in));
+      if (memcmp(&ctrl_addr.sin_addr, &last_addr_in.sin_addr,
+                 sizeof(last_addr_in.sin_addr)) != 0) {
+        uint32_t addr_num = 0;
+        memcpy(&addr_num, &last_addr_in.sin_addr, 4);
+        addr_num = ntohl(addr_num);
+        av_log(nullptr, AV_LOG_INFO,
+               "Setting control address to: %d.%d.%d.%d:%d\n",
+               (addr_num >> 24) & 0xff, (addr_num >> 16) & 0xff,
+               (addr_num >> 8) & 0xff, addr_num & 0xff, ctrl_port());
+        ctrl_addr.sin_addr = last_addr_in.sin_addr;
+      }
       return true;
+    }
     av_log(nullptr, AV_LOG_ERROR, "av_read_frame: %s\n", av_err2str_cpp(err));
     return false;
   }
@@ -281,6 +346,8 @@ public:
 class DisplayContext *g_dispCtx = nullptr;
 void DisplayVideoFrame(SwsContext *sws_ctx, AVFrame *net_frame, int bitrate);
 void DisplaySnapshotFrame(SwsContext *sws_ctx, AVFrame *net_frame);
+void UpdateCtrlMenu(std::vector<uint8_t>::const_iterator begin,
+                    std::vector<uint8_t>::const_iterator end);
 
 struct VideoFrameDisplayer {
   int bitrate;
@@ -296,6 +363,69 @@ struct SnapshotFrameDisplayer {
   }
 };
 
+enum v4l2_ctrl_type {
+  V4L2_CTRL_TYPE_INTEGER = 1,
+  V4L2_CTRL_TYPE_BOOLEAN = 2,
+  V4L2_CTRL_TYPE_MENU = 3,
+  V4L2_CTRL_TYPE_BUTTON = 4,
+  V4L2_CTRL_TYPE_INTEGER64 = 5,
+  V4L2_CTRL_TYPE_CTRL_CLASS = 6,
+  V4L2_CTRL_TYPE_STRING = 7,
+  V4L2_CTRL_TYPE_BITMASK = 8,
+  V4L2_CTRL_TYPE_INTEGER_MENU = 9,
+
+  /* Compound types are >= 0x0100 */
+  V4L2_CTRL_COMPOUND_TYPES = 0x0100,
+  V4L2_CTRL_TYPE_U8 = 0x0100,
+  V4L2_CTRL_TYPE_U16 = 0x0101,
+  V4L2_CTRL_TYPE_U32 = 0x0102,
+  V4L2_CTRL_TYPE_AREA = 0x0106,
+};
+
+struct v4l2_queryctrl {
+  uint32_t id;
+  uint32_t type;    /* enum v4l2_ctrl_type */
+  uint8_t name[32]; /* Whatever */
+  int32_t minimum;  /* Note signedness */
+  int32_t maximum;
+  int32_t step;
+  int32_t default_value;
+  uint32_t flags;
+  uint32_t reserved[2];
+};
+
+struct v4l2_querymenu {
+  uint32_t id;
+  uint32_t index;
+  union {
+    uint8_t name[32]; /* Whatever */
+    int64_t value;
+  };
+  uint32_t reserved;
+} __attribute__((packed));
+
+#define V4L2_CTRL_CLASS_CAMERA 0x009a0000
+
+class ControlReader {
+  std::vector<uint8_t>::const_iterator begin, end;
+
+  template <class T> T read() {
+    T ret;
+    memcpy(&ret, &*begin, sizeof(ret));
+    begin += sizeof(ret);
+    return ret;
+  }
+
+public:
+  ControlReader(std::vector<uint8_t>::const_iterator begin,
+                std::vector<uint8_t>::const_iterator end)
+      : begin(begin), end(end) {}
+
+  operator bool() const { return begin != end; }
+  v4l2_queryctrl read_ctrl() { return read<v4l2_queryctrl>(); }
+  v4l2_querymenu read_menu() { return read<v4l2_querymenu>(); }
+};
+
 class DisplayContext {
   NetworkGrabber net;
   AVPacket dec_pkt;
@@ -304,6 +434,7 @@ class DisplayContext {
   int64_t last_time;
   int read_bytes;
   int bitrate;
+  std::vector<uint8_t> last_ctrls;
 
   bool decode_packet() {
     if (dec_pkt.stream_index > 1)
@@ -346,9 +477,9 @@ class DisplayContext {
   }
 
 public:
-  DisplayContext(const char *sdp_path, struct sockaddr_in ctrl_addr)
-      : net(sdp_path), dec_pkt({}), ctrl_addr(ctrl_addr), last_time(-1),
-        read_bytes(0), bitrate(0) {
+  DisplayContext(const char *sdp_path)
+      : net(sdp_path), dec_pkt({}), ctrl_addr({}), last_time(-1), read_bytes(0),
+        bitrate(0) {
     av_init_packet(&dec_pkt);
     g_dispCtx = this;
   }
@@ -361,7 +492,7 @@ public:
     if (!net.init(err_handler))
       return false;
 
-    ctrl.init_send();
+    ctrl.init(net.ctrl_port() + 1);
     send_emit_keyframe();
     send_quality(QUALITY_DEF);
 
@@ -374,7 +505,11 @@ public:
   }
 
   void do_frame() {
-    if (net.read_frame(dec_pkt)) {
+    std::vector<uint8_t>::const_iterator end = ctrl.recv_ctrls(last_ctrls);
+    if (last_ctrls.begin() != end)
+      UpdateCtrlMenu(last_ctrls.begin(), end);
+
+    if (net.read_frame(dec_pkt, ctrl_addr)) {
       decode_packet();
       av_packet_unref(&dec_pkt);
     }
@@ -383,6 +518,9 @@ public:
   void send_emit_keyframe() const { ctrl.send_emit_keyframe(ctrl_addr); }
   void send_quality(double q) const { ctrl.send_quality(q, ctrl_addr); }
   void send_req_snapshot() const { ctrl.send_req_snapshot(ctrl_addr); }
+  void send_ctrl(uint32_t id, int32_t value) const {
+    ctrl.send_ctrl(id, value, ctrl_addr);
+  }
 
   const char *title() { return net.title(); }
   const char *comment() { return net.comment(); }

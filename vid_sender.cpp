@@ -25,12 +25,19 @@ extern "C" {
 #define FRAMERATE 10
 #define DEFAULT_CRF 30
 
+struct v4l2_video_data {
+  AVClass *clazz;
+  int fd;
+};
+
 class CameraGrabber {
+  const char *cam_name;
   AVCodecContext *video_dec_ctx = nullptr;
   AVFormatContext *fmt_dec_ctx = nullptr;
   int video_stream_idx = -1;
 
 public:
+  explicit CameraGrabber(const char *cam_name) : cam_name(cam_name) {}
   ~CameraGrabber() { deinit(); }
 
   bool _init(const char *video_size) {
@@ -67,6 +74,7 @@ public:
 
       struct v4l2_capability cap {};
       if (ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) {
+        close(fd);
         int err = AVERROR(errno);
         av_log(nullptr, AV_LOG_ERROR, "ioctl(VIDIOC_QUERYCAP): %s\n",
                av_err2str_cpp(err));
@@ -76,7 +84,7 @@ public:
       close(fd);
 
       if (cap.device_caps & V4L2_CAP_VIDEO_CAPTURE &&
-          !strcmp((char *)cap.card, "HD Webcam C615")) {
+          !strcmp((char *)cap.card, cam_name)) {
         dev_path = dev_info->device_name;
         break;
       }
@@ -133,6 +141,46 @@ public:
   int height() const { return video_dec_ctx->height; }
   AVRational time_base() const { return {1, FRAMERATE}; }
   AVPixelFormat pix_fmt() const { return video_dec_ctx->pix_fmt; }
+
+  std::vector<uint8_t> query_ctrls() const {
+    std::vector<uint8_t> ret;
+
+    if (fmt_dec_ctx) {
+      v4l2_video_data *vd = (v4l2_video_data *)fmt_dec_ctx->priv_data;
+      v4l2_queryctrl ctrl{};
+      ctrl.id = V4L2_CTRL_FLAG_NEXT_CTRL;
+      while (ioctl(vd->fd, VIDIOC_QUERYCTRL, &ctrl) >= 0) {
+        v4l2_control ctrl_val{};
+        ctrl_val.id = ctrl.id;
+        if (ioctl(vd->fd, VIDIOC_G_CTRL, &ctrl_val) >= 0)
+          ctrl.default_value = ctrl_val.value;
+        memcpy(&*ret.insert(ret.end(), sizeof(ctrl), 0), &ctrl, sizeof(ctrl));
+        if (ctrl.type == V4L2_CTRL_TYPE_MENU) {
+          for (int m = ctrl.minimum; m <= ctrl.maximum; ++m) {
+            v4l2_querymenu menu{};
+            menu.id = ctrl.id;
+            menu.index = m;
+            ioctl(vd->fd, VIDIOC_QUERYMENU, &menu);
+            memcpy(&*ret.insert(ret.end(), sizeof(menu), 0), &menu,
+                   sizeof(menu));
+          }
+        }
+        ctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+      }
+    }
+
+    return ret;
+  }
+
+  void set_ctrl(uint32_t id, int32_t val) {
+    if (fmt_dec_ctx) {
+      v4l2_video_data *vd = (v4l2_video_data *)fmt_dec_ctx->priv_data;
+      v4l2_control ctrl{};
+      ctrl.id = id;
+      ctrl.value = val;
+      ioctl(vd->fd, VIDIOC_S_CTRL, &ctrl);
+    }
+  }
 
   bool read_frame(AVPacket &pkt) {
     if (!fmt_dec_ctx)
@@ -294,7 +342,8 @@ public:
 class H264EncodeContext : public EncodeContext {
 public:
   static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUV422P;
-  H264EncodeContext() : EncodeContext("libx264", VIDEO_NET_PATH, pix_fmt) {}
+  explicit H264EncodeContext(const char *h264_path)
+      : EncodeContext("libx264", h264_path, pix_fmt) {}
 
   void set_options(AVDictionary *&opts) override {
     av_dict_set(&opts, "crf", AV_STRINGIFY(DEFAULT_CRF), 0);
@@ -325,8 +374,8 @@ struct V4L2m2mPriv {
 class H264EncodeContext : public EncodeContext {
 public:
   static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUYV422;
-  H264EncodeContext()
-      : EncodeContext("h264_v4l2m2m", VIDEO_NET_PATH, pix_fmt) {}
+  explicit H264EncodeContext(const char *h264_path)
+      : EncodeContext("h264_v4l2m2m", h264_path, pix_fmt) {}
 
   void set_options(AVDictionary *&opts) override {
     int bitrate = crf_to_bitrate(DEFAULT_CRF);
@@ -382,7 +431,8 @@ public:
 class JPEGEncodeContext : public EncodeContext {
 public:
   static constexpr AVPixelFormat pix_fmt = AV_PIX_FMT_YUVJ420P;
-  JPEGEncodeContext() : EncodeContext("mjpeg", SNAPSHOT_NET_PATH, pix_fmt) {}
+  explicit JPEGEncodeContext(const char *jpeg_path)
+      : EncodeContext("mjpeg", jpeg_path, pix_fmt) {}
 
   void set_options(AVDictionary *&opts) override {
     av_dict_set(&opts, "huffman", "default", 0);
@@ -401,6 +451,7 @@ template <class EncodeContext> class EncoderPipeline {
   AVPictureType next_pict_type = AV_PICTURE_TYPE_NONE;
 
 public:
+  explicit EncoderPipeline(const char *net_path) : enc(net_path) {}
   bool init(CameraGrabber &cam) {
     deinit();
 
@@ -509,10 +560,16 @@ class TranscodeContext {
   EncoderPipeline<JPEGEncodeContext> snap_enc;
   AVPacket dec_pkt = {};
   ControlInterface ctrl;
+  sockaddr_in ctrl_addr;
   bool pending_snapshot = false;
 
 public:
-  TranscodeContext() { av_init_packet(&dec_pkt); }
+  TranscodeContext(const char *cam_name, const char *h264_path,
+                   const char *jpeg_path, sockaddr_in ctrl_addr)
+      : cam(cam_name), enc(h264_path), snap_enc(jpeg_path),
+        ctrl_addr(ctrl_addr) {
+    av_init_packet(&dec_pkt);
+  }
   ~TranscodeContext() { deinit(); }
 
   bool init() {
@@ -528,7 +585,9 @@ public:
     if (!enc.init(cam))
       return false;
 
-    ctrl.init_recv();
+    ctrl.init(ntohs(ctrl_addr.sin_port));
+    ctrl_addr.sin_port = htons(ntohs(ctrl_addr.sin_port) + 1);
+    ctrl.send_ctrls(cam.query_ctrls(), ctrl_addr);
 
     return true;
   }
@@ -552,6 +611,9 @@ public:
         break;
       case ControlInterface::E_Snapshot:
         pending_snapshot = true;
+        break;
+      case ControlInterface::E_Control:
+        cam.set_ctrl(ev.ctrl_id, ev.ctrl_val);
         break;
       default:
         break;
@@ -594,16 +656,37 @@ public:
 
   void set_crf(double crf) { enc.set_crf(crf); }
 
-  void emit_keyframe() { enc.emit_keyframe(); }
+  void emit_keyframe() {
+    enc.emit_keyframe();
+    ctrl.send_ctrls(cam.query_ctrls(), ctrl_addr);
+  }
 };
 
 int main(int argc, char **argv) {
+  if (argc < 6) {
+    fprintf(stderr,
+            "usage: %s <cam-name> <dest-ipv4-addr> <h264-port> <jpeg-port> "
+            "<ctrl-port>\n",
+            argv[0]);
+    return 1;
+  }
+
+  char h264_path[32];
+  snprintf(h264_path, 32, "rtp://%s:%s", argv[2], argv[3]);
+
+  char jpeg_path[32];
+  snprintf(jpeg_path, 32, "rtp://%s:%s", argv[2], argv[4]);
+
+  sockaddr_in ctrl_addr{};
+  inet_aton(argv[2], &ctrl_addr.sin_addr);
+  ctrl_addr.sin_port = htons(strtoul(argv[5], nullptr, 10));
+
   // av_log_set_level(AV_LOG_DEBUG);
 
   /* Enable webcam capture */
   avdevice_register_all();
 
-  TranscodeContext ctx;
+  TranscodeContext ctx(argv[1], h264_path, jpeg_path, ctrl_addr);
   if (!ctx.init())
     return 1;
 
